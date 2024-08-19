@@ -9,8 +9,11 @@ from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_community.vectorstores.faiss import FAISS
 from fpdf import FPDF
 import os
+from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app)
+
 load_dotenv()
 
 # Load environment variables for OpenAI API Key
@@ -22,26 +25,29 @@ def index():
 
 @app.route('/upload', methods=['POST'])
 def upload_content():
-    if 'file' not in request.files:
-        return 'No file uploaded!', 400
+    if 'file' not in request.files or 'content_type' not in request.form:
+        return 'No file or content type selected!', 400
 
     file = request.files['file']
+    content_type = request.form['content_type']
+
     if file.filename == '':
         return 'No selected file!', 400
 
     # Save the uploaded PDF file
     pdf_path = os.path.join('uploads', file.filename)
     file.save(pdf_path)
+    print(pdf_path)
 
-    # Generate questions based on the uploaded content
-    questions = generate_questions(pdf_path)
+    # Generate content based on the selected type
+    content = generate_content(pdf_path, content_type)
 
-    # Generate a PDF with the questions
-    pdf_filename = create_pdf(questions)
+    # Generate a PDF with the content
+    pdf_filename = create_pdf(content)
 
     return send_file(pdf_filename, as_attachment=True)
 
-def generate_questions(pdf_path):
+def generate_content(pdf_path, content_type):
     loader = PyPDFLoader(file_path=pdf_path)
     documents = loader.load()
 
@@ -64,25 +70,31 @@ def generate_questions(pdf_path):
     retriever = FAISS.load_local("vector_db", embeddings).as_retriever()
     retrieval_chain = create_retrieval_chain(retriever, combine_docs_chain)
 
-    response = retrieval_chain.invoke(
-        # {"input": "Based on the content, generate quiz questions with multiple choice answers."}
-        {"input": "Based on the content, generate a lesson plan and weekly timetable for student to follow."}
+    # Define the input based on the selected content type
+    input_texts = {
+        'questions': "Based on the content, generate quiz questions with multiple choice answers.",
+        'answers': "Based on the content, generate detailed answers to key questions.",
+        'lesson_plan': "Based on the content, generate a lesson plan and weekly timetable for a student to follow.",
+        'summary': "Based on the content, generate a summary of the document."
+    }
 
-    )
+    input_text = input_texts.get(content_type, "Based on the content, generate a summary.")
+
+    response = retrieval_chain.invoke({"input": input_text})
 
     return response["answer"]
 
-def create_pdf(questions):
+def create_pdf(content):
     pdf = FPDF()
     pdf.add_page()
 
     pdf.set_font("Arial", size=12)
-    pdf.multi_cell(0, 10, questions)
+    pdf.multi_cell(0, 10, content)
 
-    pdf_filename = "generated_quiz.pdf"
+    pdf_filename = "generated_content.pdf"
     pdf.output(pdf_filename)
-    
+
     return pdf_filename
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True, port=7000)
